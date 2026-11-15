@@ -1,0 +1,6 @@
+*.ps1 -text
+*.bat -text
+*.txt -text
+*.cs -text
+*.manifest -text
+*.ico binary

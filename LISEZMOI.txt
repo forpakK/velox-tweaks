@@ -1,0 +1,36 @@
+VELOX TWEAKS 1.0
+================
+
+LANCER
+  (Option) Double-clique une seule fois sur "Creer Velox Tweaks.exe.bat" :
+  il cree "Velox Tweaks.exe" avec l'icone Velox. Ensuite, double-clique
+  simplement sur "Velox Tweaks.exe" (garde-le dans ce dossier).
+
+  Sinon :
+  1. Dezippe le dossier ou tu veux (ex : Bureau).
+  2. Clic droit sur "Lancer Velox Tweaks.bat" > "Executer en tant qu'administrateur".
+  3. Laisse la petite fenetre noire ouverte pendant que tu utilises l'appli.
+
+ANTIVIRUS
+  Certains antivirus (Bitdefender...) bloquent le script car il modifie le
+  registre et les services Windows. C'est un faux positif : tout le code est
+  lisible dans VeloxTweaks.ps1 (ouvre-le avec le Bloc-notes).
+  Ajoute une exception pour le dossier VeloxTweaks AVANT de dezipper.
+
+  Si Windows SmartScreen affiche "Windows a protege votre ordinateur" :
+  clique sur "Informations complementaires" puis "Executer quand meme".
+
+AVANT DE COMMENCER
+  - Va dans Sauvegarde > "Point de restauration systeme" (ou laisse la case
+    "Point de restauration avant d'appliquer" cochee dans Tweaks).
+  - Chaque tweak peut etre annule : coche-le puis "Annuler la selection",
+    ou "Tout annuler" sur le Dashboard.
+
+FICHIERS
+  - Sauvegardes et journal : Documents\VeloxTweaks\
+  - Journal : Documents\VeloxTweaks\velox.log
+
+PORTABLES
+  Le plan "Velox Ultimate Performance" et le Velox Game Mode gardent le CPU
+  a fond : la batterie se vide plus vite. Reviens en "Utilisation normale"
+  quand tu ne joues pas.
