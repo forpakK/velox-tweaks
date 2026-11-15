@@ -19,14 +19,14 @@ Velox vérifie tout seul les nouvelles versions au démarrage et propose de se m
 |---|---|
 | **Dashboard** | Bouton **⚡ BOOSTER**, **score d'optimisation sur 100**, infos du PC |
 | **Tweaks** | 34 réglages Windows, chacun annulable, + **profils** à partager avec tes amis |
-| **Maintenance** | Nettoyage temp & shaders, TRIM, DNS, composants Windows |
+| **Maintenance** | Nettoyage temp & shaders, TRIM, DNS, **applis Windows inutiles**, **nettoyage automatique** |
 | **Sauvegarde** | Point de restauration, export du registre, des pilotes et du plan d'alimentation |
 | **Réparations** | Fichiers système (DISM/SFC), Internet, son, Windows Update, Store, explorateur |
-| **Moniteur** | CPU, RAM, GPU, température, VRAM, consommation en direct (NVIDIA) |
+| **Moniteur** | CPU, RAM, GPU, température, VRAM, consommation en direct, bouton **Fermer** |
 | **Démarrage** | Activer / désactiver les programmes lancés avec Windows |
 | **Outils gaming** | Convertisseur de sensibilité, test de ping, check-up avec boutons **Corriger**, **viseur personnalisé**, **test du polling rate** |
 | **Velox Game Mode** | Plan d'alimentation ultime + **mode jeu automatique** quand un jeu se lance |
-| **Paramètres** | Icône près de l'horloge, **lancement avec Windows**, **couleur** de l'appli |
+| **Paramètres** | Icône près de l'horloge, lancement avec Windows, couleur, **raccourcis clavier**, **nouveautés** |
 
 ## Sécurité
 

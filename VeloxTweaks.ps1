@@ -20,7 +20,7 @@ trap {
     continue
 }
 
-$AppVersion = '1.7.1'
+$AppVersion = '1.8'
 $DataRoot   = Join-Path ([Environment]::GetFolderPath('MyDocuments')) 'VeloxTweaks'
 $BackupRoot = Join-Path $DataRoot 'Backups'
 $LogFile    = Join-Path $DataRoot 'velox.log'
@@ -36,6 +36,7 @@ $Settings = @{
     TrayOnClose = $true
     Accent = '#2D7BFF'
     Cross = $false; CrossStyle = 'Croix'; CrossColor = '#00FF66'; CrossSize = 10; CrossThick = 2; CrossGap = 4
+    Hotkeys = $true; AutoClean = $false; LastClean = ''; LastSeenVersion = ''
 }
 try { if (Test-Path $SettingsFile) { $j = Get-Content $SettingsFile -Raw | ConvertFrom-Json; foreach ($p in $j.PSObject.Properties) { $Settings[$p.Name] = $p.Value } } } catch {}
 function Save-Settings { try { $Settings | ConvertTo-Json | Set-Content -Path $SettingsFile -Encoding UTF8 } catch {} }
@@ -791,6 +792,7 @@ function Show-Page([string]$Key) {
     (UI 'MainScroll').ScrollToTop()
     if ($Key -eq 'monitor') { Start-Monitor } elseif (Get-Command Stop-Monitor -ErrorAction SilentlyContinue) { Stop-Monitor }
     if ($Key -eq 'startup') { Show-StartupItems }
+    if ($Key -eq 'maintenance' -and -not $script:BloatScanned) { $script:BloatScanned = $true; Show-BloatApps }
 }
 
 # ===== DASHBOARD =====
@@ -1023,6 +1025,83 @@ foreach ($p in $paths) {
 [void]$grid.Children.Add((New-ActionCard 'Vider la corbeille' 'Supprime définitivement le contenu de la corbeille sur tous les disques.' 1 'Vider' @{ Title = 'Corbeille'; Code = 'Clear-RecycleBin -Force -ErrorAction SilentlyContinue; "Corbeille vidée"'; Confirm = 'Vider définitivement la corbeille ?' }))
 [void]$grid.Children.Add((New-ActionCard 'Nettoyer les composants Windows' 'Supprime les anciennes versions des mises à jour Windows (DISM). Peut prendre plusieurs minutes.' 1 'Nettoyer' @{ Title = 'Nettoyage des composants'; Code = 'DISM /Online /Cleanup-Image /StartComponentCleanup | Out-Null; "DISM terminé (code $LASTEXITCODE)"' }))
 [void]$pg.Children.Add((New-Panel 'Maintenance' 'Tâches dʼentretien sans risque, à lancer quand tu veux.' $grid))
+# Applis Windows inutiles
+$BloatApps = [ordered]@{
+    'Microsoft.BingNews' = 'Actualités'; 'Microsoft.BingWeather' = 'Météo'; 'Microsoft.BingSearch' = 'Recherche Bing'
+    'Microsoft.GetHelp' = 'Obtenir de lʼaide'; 'Microsoft.Getstarted' = 'Astuces'; 'Microsoft.MicrosoftSolitaireCollection' = 'Solitaire'
+    'Microsoft.MicrosoftOfficeHub' = 'Microsoft 365 (Office)'; 'Clipchamp.Clipchamp' = 'Clipchamp'; 'Microsoft.People' = 'Contacts'
+    'Microsoft.PowerAutomateDesktop' = 'Power Automate'; 'Microsoft.Todos' = 'Microsoft To Do'; 'Microsoft.WindowsFeedbackHub' = 'Hub de commentaires'
+    'Microsoft.WindowsMaps' = 'Cartes'; 'Microsoft.ZuneVideo' = 'Films et TV'; 'Microsoft.549981C3F5F10' = 'Cortana'
+    'Microsoft.MixedReality.Portal' = 'Portail de réalité mixte'; 'Microsoft.SkypeApp' = 'Skype'; 'MSTeams' = 'Teams (perso)'
+    'MicrosoftTeams' = 'Teams (ancien)'; 'Microsoft.OutlookForWindows' = 'Nouvel Outlook'; 'Microsoft.Windows.DevHome' = 'Dev Home'
+    'Microsoft.Copilot' = 'Copilot'; 'Microsoft.YourPhone' = 'Lien avec le téléphone'
+}
+$BloatList = New-Object Windows.Controls.StackPanel
+$script:BloatGrid = $null; $script:BloatScanned = $false
+function Show-BloatApps {
+    $BloatList.Children.Clear()
+    $installed = @(Get-AppxPackage -ErrorAction SilentlyContinue | ForEach-Object { $_.Name })
+    $grid = New-Grid 2
+    foreach ($k in $BloatApps.Keys) {
+        if ($installed -contains $k) {
+            $cb = New-Object Windows.Controls.CheckBox
+            $cb.Content = $BloatApps[$k]; $cb.Tag = $k; $cb.Foreground = Br '#E6EAF2'; $cb.FontSize = 12.5; $cb.Margin = Th '5,5,5,5'
+            [void]$grid.Children.Add($cb)
+        }
+    }
+    $script:BloatGrid = $grid
+    if ($grid.Children.Count -eq 0) { [void]$BloatList.Children.Add((New-Text 'Aucune appli inutile trouvée : ton Windows est déjà propre. ✔' 12 '#4ADE80')) }
+    else { [void]$BloatList.Children.Add((New-Text "$($grid.Children.Count) appli(s) inutile(s) trouvée(s). Coche celles à désinstaller :" 11.5 '#7D879B' 'Normal' '0,0,0,6')); [void]$BloatList.Children.Add($grid) }
+}
+$bloatRight = New-Object Windows.Controls.StackPanel; $bloatRight.Orientation = 'Horizontal'
+$bBloatScan = New-Button 'Actualiser' 'Ghost'; $bBloatScan.Margin = Th '0,0,6,0'
+$bBloatRemove = New-Button 'Désinstaller la sélection' 'Danger'
+[void]$bloatRight.Children.Add($bBloatScan); [void]$bloatRight.Children.Add($bBloatRemove)
+$bBloatScan.Add_Click({ Show-BloatApps })
+$bBloatRemove.Add_Click({
+    if (-not $script:BloatGrid) { return }
+    $sel = @($script:BloatGrid.Children | Where-Object { $_.IsChecked } | ForEach-Object { [string]$_.Tag })
+    if ($sel.Count -eq 0) { Add-Log 'Aucune appli cochée.'; return }
+    $names = ($sel | ForEach-Object { $BloatApps[$_] }) -join "`n • "
+    if (-not (Confirm-Action "Désinstaller ces applis ?`n`n • $names`n`nTu pourras les réinstaller depuis le Microsoft Store.")) { return }
+    $code = ($sel | ForEach-Object { "Get-AppxPackage -Name '$_' | Remove-AppxPackage -ErrorAction SilentlyContinue; 'Désinstallé : $($BloatApps[$_])'" }) -join "`n"
+    Start-Task "Désinstallation de $($sel.Count) appli(s)" $code $false { param($lines) Show-BloatApps }
+})
+[void]$pg.Children.Add((New-Panel 'Applis Windows inutiles' 'Les applis préinstallées par Microsoft dont un joueur nʼa pas besoin. Réinstallables depuis le Microsoft Store.' $BloatList $bloatRight))
+
+# Nettoyage automatique hebdomadaire
+$TempCleanCode = @'
+$freed = 0
+foreach ($p in "$env:TEMP", "$env:windir\Temp") {
+    if (-not (Test-Path $p)) { continue }
+    Get-ChildItem $p -Recurse -Force -File -ErrorAction SilentlyContinue | ForEach-Object {
+        $len = $_.Length
+        try { Remove-Item $_.FullName -Force -ErrorAction Stop; $freed += $len } catch {}
+    }
+}
+"Nettoyage automatique : {0:N0} Mo libérés" -f ($freed / 1MB)
+'@
+$acBody = New-Object Windows.Controls.StackPanel
+$AutoCleanCb = New-Object Windows.Controls.CheckBox
+$AutoCleanCb.Content = 'Vider les fichiers temporaires automatiquement une fois par semaine'
+$AutoCleanCb.FontSize = 12.5; $AutoCleanCb.Foreground = Br '#E6EAF2'; $AutoCleanCb.IsChecked = [bool]$Settings.AutoClean
+$AutoCleanCb.Add_Checked({ $Settings.AutoClean = $true; Save-Settings; Add-Log 'Nettoyage automatique activé' })
+$AutoCleanCb.Add_Unchecked({ $Settings.AutoClean = $false; Save-Settings; Add-Log 'Nettoyage automatique désactivé' })
+[void]$acBody.Children.Add($AutoCleanCb)
+[void]$acBody.Children.Add((New-Text 'Se lance tout seul quand Velox est ouvert (ou près de lʼhorloge). Ne touche pas aux caches de shaders, pour éviter les saccades en jeu.' 10.5 '#6B7488' 'Normal' '0,8,0,0'))
+[void]$pg.Children.Add((New-Panel 'Nettoyage automatique' '' $acBody))
+function Update-AutoClean {
+    if (-not $Settings.AutoClean -or $script:Job) { return }
+    $last = [datetime]::MinValue
+    try {
+        $v = $Settings.LastClean
+        if ($v -is [datetime]) { $last = $v } elseif ($v) { $last = [datetime]::Parse([string]$v, $Inv, [Globalization.DateTimeStyles]::RoundtripKind) }
+    } catch {}
+    if (((Get-Date) - $last).TotalDays -ge 7) {
+        $Settings.LastClean = (Get-Date).ToString('o'); Save-Settings
+        Start-Task 'Nettoyage automatique' $TempCleanCode
+    }
+}
 [void]$pg.Children.Add((New-ActivityPanel 'Activité de maintenance'))
 
 # ===== SAUVEGARDE =====
@@ -1387,6 +1466,8 @@ function Initialize-Native {
 [DllImport("user32.dll")] public static extern int SetWindowLong(IntPtr hWnd, int nIndex, int dwNewLong);
 [StructLayout(LayoutKind.Sequential)] public struct RAWINPUTDEVICE { public ushort UsagePage; public ushort Usage; public uint Flags; public IntPtr Target; }
 [DllImport("user32.dll", SetLastError = true)] public static extern bool RegisterRawInputDevices(RAWINPUTDEVICE[] devices, uint count, uint size);
+[DllImport("user32.dll")] public static extern bool RegisterHotKey(IntPtr hWnd, int id, uint fsModifiers, uint vk);
+[DllImport("user32.dll")] public static extern bool UnregisterHotKey(IntPtr hWnd, int id);
 '@
 }
 
@@ -1596,6 +1677,7 @@ $TopList = New-Object Windows.Controls.StackPanel
 [void]$pg.Children.Add((New-Panel 'Ce qui utilise ton PC' 'Les 6 programmes qui utilisent le plus le processeur en ce moment.' $TopList))
 [void]$pg.Children.Add((New-Text 'Repères GPU : sous 75 °C = parfait · 75 à 83 °C = normal en jeu · plus de 83 °C = vérifie la ventilation et la poussière.' 10.5 '#6B7488'))
 
+$ProtectedProcs = @('system', 'idle', 'svchost', 'csrss', 'wininit', 'services', 'lsass', 'lsaiso', 'smss', 'winlogon', 'dwm', 'explorer', 'registry', 'memory compression', 'msmpeng', 'powershell', 'audiodg', 'fontdrvhost', 'sihost', 'ctfmon', 'searchhost', 'startmenuexperiencehost', 'runtimebroker', 'securityhealthservice', 'spoolsv', 'wudfhost', 'nvcontainer', 'nvdisplay.container', 'bdservicehost', 'bdagent', 'vsserv', 'wmiprvse', 'taskhostw', 'conhost')
 function Set-TileColor($Tile, [double]$Val, [double]$Warn, [double]$Hot) {
     $Tile.Value.Foreground = Br $(if ($Val -ge $Hot) { '#F87171' } elseif ($Val -ge $Warn) { '#F5B83D' } else { '#FFFFFF' })
 }
@@ -1622,11 +1704,22 @@ function Update-MonitorUI {
         $MGpuName.Text = 'Infos GPU détaillées disponibles seulement avec une carte NVIDIA.'
         foreach ($t in $MGpu, $MTemp, $MVram, $MClock, $MPower, $MFan) { $t.Value.Text = 'N/A' }
     }
-    if ($MonData.Top) {
+    if ($MonData.Top -and -not $TopList.IsMouseOver) {
         $TopList.Children.Clear()
         foreach ($row in $MonData.Top) {
             $p = $row -split '\|'
             $dp = New-Object Windows.Controls.DockPanel; $dp.Margin = Th '0,2,0,2'
+            if ($ProtectedProcs -notcontains $p[0].ToLower()) {
+                $kb = New-Button 'Fermer' 'Danger'; $kb.Padding = Th '8,2'; $kb.FontSize = 10.5; $kb.Margin = Th '10,0,0,0'; $kb.Tag = $p[0]
+                $kb.Add_Click({
+                    $n = [string]$this.Tag
+                    if (Confirm-Action "Fermer « $n » ?`n`nTout travail non enregistré dans ce programme sera perdu.") {
+                        Get-Process -Name $n -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+                        Add-Log "Programme fermé : $n"
+                    }
+                })
+                [Windows.Controls.DockPanel]::SetDock($kb, 'Right'); [void]$dp.Children.Add($kb)
+            }
             $r = New-Text ("{0} % CPU · {1} Mo" -f $p[1], $p[2]) 11.5 '#8A93A6'
             [Windows.Controls.DockPanel]::SetDock($r, 'Right'); [void]$dp.Children.Add($r)
             [void]$dp.Children.Add((New-Text $p[0] 12 '#E6EAF2' 'SemiBold'))
@@ -1913,6 +2006,40 @@ function Restart-Velox {
     Exit-Velox $true
 }
 
+# Raccourcis clavier globaux
+function Show-TrayTip([string]$Text) { try { $TrayIcon.ShowBalloonTip(2000, 'Velox Tweaks', $Text, [System.Windows.Forms.ToolTipIcon]::Info) } catch {} }
+function Switch-PerfPlan {
+    if (Test-VeloxPlanActive) { Start-Task 'Plan Utilisation normale' 'Set-BalancedPlan'; Show-TrayTip 'Mode performances désactivé' }
+    else { Start-Task 'Plan performances' 'Enable-VeloxPlan'; Show-TrayTip 'Mode performances activé ⚡' }
+}
+$script:Hotkeys = @(
+    @{ Id = 9101; Mod = 0x4003; Vk = 0x56; Label = 'Ctrl + Alt + V'; Desc = 'Afficher / cacher le viseur'; Action = { $CrossCb.IsChecked = -not $CrossCb.IsChecked; Show-TrayTip $(if ($CrossCb.IsChecked) { 'Viseur affiché' } else { 'Viseur caché' }) } }
+    @{ Id = 9102; Mod = 0x4003; Vk = 0x42; Label = 'Ctrl + Alt + B'; Desc = 'Mode performances on / off'; Action = { Switch-PerfPlan } }
+    @{ Id = 9103; Mod = 0x4003; Vk = 0x4F; Label = 'Ctrl + Alt + O'; Desc = 'Ouvrir Velox'; Action = { Show-MainWindow } }
+)
+$script:HotkeyHook = $null
+function Set-Hotkeys([bool]$On) {
+    try {
+        Initialize-Native
+        $h = (New-Object Windows.Interop.WindowInteropHelper $Window).EnsureHandle()
+        if (-not $script:HotkeyHook) {
+            $script:HotkeyHook = [Windows.Interop.HwndSourceHook] {
+                param($hw, $msg, $wp, $lp, [ref]$handled)
+                if ($msg -eq 0x0312) {
+                    $id = $wp.ToInt32()
+                    foreach ($k in $script:Hotkeys) { if ($k.Id -eq $id) { try { & $k.Action } catch {} } }
+                }
+                return [IntPtr]::Zero
+            }
+            [Windows.Interop.HwndSource]::FromHwnd($h).AddHook($script:HotkeyHook)
+        }
+        foreach ($k in $script:Hotkeys) {
+            [void][Velox.Native]::UnregisterHotKey($h, $k.Id)
+            if ($On -and -not [Velox.Native]::RegisterHotKey($h, $k.Id, [uint32]$k.Mod, [uint32]$k.Vk)) { Add-Log "Raccourci $($k.Label) déjà utilisé par une autre appli." }
+        }
+    } catch { Add-Log "Raccourcis clavier indisponibles : $($_.Exception.Message)" }
+}
+
 $pg = New-Page 'settings' 'Paramètres' 'Comportement de Velox, lancement avec Windows et couleur'
 $bgBody = New-Object Windows.Controls.StackPanel
 $cbTrayOpt = New-Object Windows.Controls.CheckBox
@@ -1964,6 +2091,58 @@ foreach ($b in $bGit, $bDir, $bLog) { [void]$aboutRow.Children.Add($b) }
 [void]$aboutBody.Children.Add($aboutRow)
 [void]$pg.Children.Add((New-Panel 'À propos' 'Velox vérifie les nouvelles versions sur GitHub à chaque démarrage.' $aboutBody))
 
+$hkBody = New-Object Windows.Controls.StackPanel
+$HotkeyCb = New-Object Windows.Controls.CheckBox
+$HotkeyCb.Content = 'Activer les raccourcis clavier (marchent aussi en jeu)'
+$HotkeyCb.FontSize = 12.5; $HotkeyCb.Foreground = Br '#E6EAF2'; $HotkeyCb.Margin = Th '0,0,0,10'
+$HotkeyCb.IsChecked = [bool]$Settings.Hotkeys
+$HotkeyCb.Add_Checked({ $Settings.Hotkeys = $true; Save-Settings; Set-Hotkeys $true })
+$HotkeyCb.Add_Unchecked({ $Settings.Hotkeys = $false; Save-Settings; Set-Hotkeys $false })
+[void]$hkBody.Children.Add($HotkeyCb)
+foreach ($k in $script:Hotkeys) {
+    $dp = New-Object Windows.Controls.DockPanel; $dp.Margin = Th '0,2,0,2'
+    $tag = New-Tag $k.Label '#E6EAF2' '#1A2030'; $tag.Width = 120
+    [Windows.Controls.DockPanel]::SetDock($tag, 'Left'); [void]$dp.Children.Add($tag)
+    [void]$dp.Children.Add((New-Text $k.Desc 12 '#AEB6C6' 'Normal' '8,0,0,0'))
+    [void]$hkBody.Children.Add($dp)
+}
+[void]$pg.Children.Add((New-Panel 'Raccourcis clavier' 'Utilisables partout, même en jeu, tant que Velox tourne (fenêtre ou icône près de lʼhorloge).' $hkBody))
+
+# Nouveautés
+$Changelog = @(
+    @('1.8', @('Désinstaller les applis Windows inutiles (Maintenance)', 'Bouton « Fermer » sur les programmes dans le Moniteur', 'Raccourcis clavier : Ctrl+Alt+V (viseur), Ctrl+Alt+B (performances), Ctrl+Alt+O (ouvrir)', 'Nettoyage automatique des fichiers temporaires chaque semaine', 'Cette page Nouveautés')),
+    @('1.7', @('Score dʼoptimisation sur 100 et boutons « Corriger » dans le check-up', 'Icône près de lʼhorloge et lancement avec Windows', 'Viseur personnalisé, test du polling rate, profils, choix de la couleur')),
+    @('1.6', @('Mises à jour automatiques depuis GitHub', 'Moniteur en direct, gestion du démarrage, mode jeu automatique')),
+    @('1.4', @('Bouton ⚡ BOOSTER : tous les meilleurs réglages en un clic')),
+    @('1.2', @('Outils gaming : convertisseur de sensibilité, test de ping, check-up')),
+    @('1.0', @('Première version de Velox Tweaks'))
+)
+$clBody = New-Object Windows.Controls.StackPanel
+foreach ($v in $Changelog) {
+    [void]$clBody.Children.Add((New-Text "Version $($v[0])" 13 '#FFFFFF' 'SemiBold' '0,6,0,4'))
+    foreach ($l in $v[1]) { [void]$clBody.Children.Add((New-Text "• $l" 11.5 '#AEB6C6' 'Normal' '8,1,0,1')) }
+}
+[void]$pg.Children.Add((New-Panel 'Nouveautés' 'Ce qui a changé à chaque version.' $clBody))
+
+# Bandeau « Velox a été mis à jour »
+$NewsBanner = New-Object Windows.Controls.Border
+$NewsBanner.Background = Br '#0D2A1B'; $NewsBanner.BorderBrush = Br '#1D4D32'; $NewsBanner.BorderThickness = Th '1'
+$NewsBanner.CornerRadius = [Windows.CornerRadius]::new(12); $NewsBanner.Padding = Th '18,14,18,14'; $NewsBanner.Margin = Th '0,0,0,16'
+$NewsBanner.Visibility = 'Collapsed'
+$nbDock = New-Object Windows.Controls.DockPanel
+$bNewsOk = New-Button 'OK' 'Ghost'; $bNewsOk.VerticalAlignment = 'Center'
+[Windows.Controls.DockPanel]::SetDock($bNewsOk, 'Right'); [void]$nbDock.Children.Add($bNewsOk)
+$nbText = New-Object Windows.Controls.StackPanel
+[void]$nbText.Children.Add((New-Text "✔ Velox a été mis à jour en version $AppVersion" 14 '#4ADE80' 'SemiBold'))
+$cur = $Changelog | Where-Object { $AppVersion -like "$($_[0])*" } | Select-Object -First 1
+if ($cur) { foreach ($l in $cur[1]) { [void]$nbText.Children.Add((New-Text "• $l" 11.5 '#AEB6C6' 'Normal' '0,2,0,0')) } }
+[void]$nbDock.Children.Add($nbText)
+$NewsBanner.Child = $nbDock
+[void]$Pages['dashboard'].Children.Insert(2, $NewsBanner)
+$bNewsOk.Add_Click({ $NewsBanner.Visibility = 'Collapsed' })
+if ([string]$Settings.LastSeenVersion -ne $AppVersion -and ($Settings.LastSeenVersion -or $Updated)) { $NewsBanner.Visibility = 'Visible' }
+if ([string]$Settings.LastSeenVersion -ne $AppVersion) { $Settings.LastSeenVersion = $AppVersion; Save-Settings }
+
 # --- État & rafraîchissement ----------------------------------------------------
 function Update-Status {
     foreach ($t in $Tweaks) {
@@ -2011,6 +2190,7 @@ $Timer.Add_Tick({
     if ($script:Tick % 12 -eq 6) { Update-AutoGame }
     if (-not $script:UpdHandled) { Update-UpdateCheck }
     if ($script:Tick -eq 5) { try { Update-Score } catch {} }
+    if ($script:Tick % 150 -eq 20) { try { Update-AutoClean } catch {} }
 })
 $Timer.Start()
 
@@ -2030,5 +2210,6 @@ $Window.Add_Closing({
 $App = New-Object Windows.Application
 $App.ShutdownMode = 'OnExplicitShutdown'
 if ($Settings.Cross) { try { Set-Cross $true } catch {} }
+if ($Settings.Hotkeys) { Set-Hotkeys $true }
 if ($Tray) { Add-Log 'Velox démarré en arrière-plan (lancement avec Windows)' } else { $Window.Show() }
 [void]$App.Run()

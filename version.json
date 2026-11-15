@@ -1,4 +1,4 @@
 {
-  "version": "1.7.1",
-  "notes": "Correctif : erreur New-Input au démarrage de la 1.7\nScore sur 100, boutons Corriger, icône près de l'horloge, lancement avec Windows\nViseur, test du polling rate, profils, choix de la couleur"
+  "version": "1.8",
+  "notes": "Désinstaller les applis Windows inutiles\nBouton Fermer dans le Moniteur, raccourcis clavier (Ctrl+Alt+V / B / O)\nNettoyage automatique hebdomadaire et page Nouveautés"
 }
