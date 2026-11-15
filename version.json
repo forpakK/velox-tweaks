@@ -1,4 +1,4 @@
 {
-  "version": "1.7",
-  "notes": "Score d'optimisation sur 100 et boutons Corriger\nIcône près de l'horloge et lancement avec Windows\nViseur personnalisé, test du polling rate, profils à partager, choix de la couleur"
+  "version": "1.7.1",
+  "notes": "Correctif : erreur New-Input au démarrage de la 1.7\nScore sur 100, boutons Corriger, icône près de l'horloge, lancement avec Windows\nViseur, test du polling rate, profils, choix de la couleur"
 }

@@ -20,7 +20,7 @@ trap {
     continue
 }
 
-$AppVersion = '1.7'
+$AppVersion = '1.7.1'
 $DataRoot   = Join-Path ([Environment]::GetFolderPath('MyDocuments')) 'VeloxTweaks'
 $BackupRoot = Join-Path $DataRoot 'Backups'
 $LogFile    = Join-Path $DataRoot 'velox.log'
@@ -614,6 +614,34 @@ function Get-ImpactTag([string]$Impact) {
     }
 }
 
+$Inv = [Globalization.CultureInfo]::InvariantCulture
+
+function New-Input([string]$Text, [double]$Width = 110) {
+    $tb = New-Object Windows.Controls.TextBox
+    $tb.Text = $Text; $tb.Width = $Width; $tb.Height = 32; $tb.FontSize = 13
+    $tb.Background = Br '#0A0F1C'; $tb.Foreground = Br '#FFFFFF'; $tb.BorderBrush = Br '#262F45'
+    $tb.CaretBrush = Br '#FFFFFF'; $tb.Padding = Th '6,5,6,5'; $tb.VerticalContentAlignment = 'Center'
+    $tb
+}
+function New-Combo([string[]]$Items, [double]$Width = 200, [bool]$Editable = $false) {
+    $cb = New-Object Windows.Controls.ComboBox
+    foreach ($i in $Items) { [void]$cb.Items.Add($i) }
+    $cb.Width = $Width; $cb.Height = 32; $cb.FontSize = 13; $cb.IsEditable = $Editable
+    $cb.VerticalContentAlignment = 'Center'
+    if ($cb.Items.Count) { $cb.SelectedIndex = 0 }
+    $cb
+}
+function New-Field([string]$Label, $Control) {
+    $sp = New-Object Windows.Controls.StackPanel; $sp.Margin = Th '0,0,14,10'
+    [void]$sp.Children.Add((New-Text $Label.ToUpper() 9.5 '#7D879B' 'SemiBold' '0,0,0,5'))
+    [void]$sp.Children.Add($Control)
+    $sp
+}
+function ConvertTo-Num([string]$s) {
+    $v = 0.0
+    if ([double]::TryParse(($s.Trim() -replace ',', '.'), [Globalization.NumberStyles]::Float, $Inv, [ref]$v)) { $v } else { $null }
+}
+
 # --- Journal d'activité --------------------------------------------------------
 $Log = New-Object System.Collections.ObjectModel.ObservableCollection[string]
 function Add-Log([string]$Text) {
@@ -1124,34 +1152,6 @@ if ($found -eq 0) { "Rien à fermer" }
 
 # ===== OUTILS GAMING =====
 $pg = New-Page 'tools' 'Outils gaming' 'Convertisseur de sensibilité, test de ping et check-up de ton PC'
-$Inv = [Globalization.CultureInfo]::InvariantCulture
-
-function New-Input([string]$Text, [double]$Width = 110) {
-    $tb = New-Object Windows.Controls.TextBox
-    $tb.Text = $Text; $tb.Width = $Width; $tb.Height = 32; $tb.FontSize = 13
-    $tb.Background = Br '#0A0F1C'; $tb.Foreground = Br '#FFFFFF'; $tb.BorderBrush = Br '#262F45'
-    $tb.CaretBrush = Br '#FFFFFF'; $tb.Padding = Th '6,5,6,5'; $tb.VerticalContentAlignment = 'Center'
-    $tb
-}
-function New-Combo([string[]]$Items, [double]$Width = 200, [bool]$Editable = $false) {
-    $cb = New-Object Windows.Controls.ComboBox
-    foreach ($i in $Items) { [void]$cb.Items.Add($i) }
-    $cb.Width = $Width; $cb.Height = 32; $cb.FontSize = 13; $cb.IsEditable = $Editable
-    $cb.VerticalContentAlignment = 'Center'
-    if ($cb.Items.Count) { $cb.SelectedIndex = 0 }
-    $cb
-}
-function New-Field([string]$Label, $Control) {
-    $sp = New-Object Windows.Controls.StackPanel; $sp.Margin = Th '0,0,14,10'
-    [void]$sp.Children.Add((New-Text $Label.ToUpper() 9.5 '#7D879B' 'SemiBold' '0,0,0,5'))
-    [void]$sp.Children.Add($Control)
-    $sp
-}
-function ConvertTo-Num([string]$s) {
-    $v = 0.0
-    if ([double]::TryParse(($s.Trim() -replace ',', '.'), [Globalization.NumberStyles]::Float, $Inv, [ref]$v)) { $v } else { $null }
-}
-
 # --- Convertisseur de sensibilité -------------------------------------------
 # Yaw = degrés tournés par "count" de souris pour une sensi de 1 (Fortnite : par 1 %).
 $SensGames = [ordered]@{
