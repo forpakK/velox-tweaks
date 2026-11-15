@@ -1,7 +1,8 @@
 ﻿# ============================================================================
-#  Velox Tweaks 1.0  -  Optimiseur Windows (PowerShell + WPF)
+#  Velox Tweaks  -  Optimiseur Windows (PowerShell + WPF)
 #  Lancer avec "Lancer Velox Tweaks.bat" (demande les droits administrateur).
 # ============================================================================
+param([switch]$Tray, [switch]$Updated)
 
 # --- Droits administrateur ----------------------------------------------------
 Add-Type -AssemblyName PresentationFramework
@@ -19,11 +20,47 @@ trap {
     continue
 }
 
-$AppVersion = '1.6'
+$AppVersion = '1.7'
 $DataRoot   = Join-Path ([Environment]::GetFolderPath('MyDocuments')) 'VeloxTweaks'
 $BackupRoot = Join-Path $DataRoot 'Backups'
 $LogFile    = Join-Path $DataRoot 'velox.log'
 New-Item -ItemType Directory -Path $BackupRoot -Force | Out-Null
+$ScriptPath = $PSCommandPath
+$ScriptDir  = $PSScriptRoot
+
+# --- Réglages de Velox (settings.json) -------------------------------------------
+$SettingsFile = Join-Path $DataRoot 'settings.json'
+$Settings = @{
+    AutoGame = $false
+    Games = 'FortniteClient-Win64-Shipping, VALORANT-Win64-Shipping, cs2, r5apex, RobloxPlayerBeta, javaw, Overwatch, cod, RustClient'
+    TrayOnClose = $true
+    Accent = '#2D7BFF'
+    Cross = $false; CrossStyle = 'Croix'; CrossColor = '#00FF66'; CrossSize = 10; CrossThick = 2; CrossGap = 4
+}
+try { if (Test-Path $SettingsFile) { $j = Get-Content $SettingsFile -Raw | ConvertFrom-Json; foreach ($p in $j.PSObject.Properties) { $Settings[$p.Name] = $p.Value } } } catch {}
+function Save-Settings { try { $Settings | ConvertTo-Json | Set-Content -Path $SettingsFile -Encoding UTF8 } catch {} }
+
+Add-Type -AssemblyName System.Windows.Forms, System.Drawing
+
+# --- Une seule copie de Velox à la fois ---------------------------------------------
+$script:Mutex = New-Object Threading.Mutex($false, 'Global\VeloxTweaksApp')
+$gotMutex = $false
+try { $gotMutex = $script:Mutex.WaitOne($(if ($Updated) { 15000 } else { 4000 })) } catch [Threading.AbandonedMutexException] { $gotMutex = $true }
+if (-not $gotMutex) {
+    [void][Windows.MessageBox]::Show("Velox Tweaks est déjà ouvert.`n`nCherche lʼicône ⚡ près de lʼhorloge (en bas à droite), puis double-clique dessus.", 'Velox Tweaks', 'OK', 'Information')
+    exit
+}
+
+# --- Couleur d'accent ------------------------------------------------------------------
+function Get-MixColor([string]$A, [string]$B, [double]$T) {
+    $ca = [Windows.Media.ColorConverter]::ConvertFromString($A); $cb = [Windows.Media.ColorConverter]::ConvertFromString($B)
+    '#{0:X2}{1:X2}{2:X2}' -f [int]($ca.R * $T + $cb.R * (1 - $T)), [int]($ca.G * $T + $cb.G * (1 - $T)), [int]($ca.B * $T + $cb.B * (1 - $T))
+}
+$Accent = '#2D7BFF'
+try { [void][Windows.Media.ColorConverter]::ConvertFromString([string]$Settings.Accent); $Accent = [string]$Settings.Accent } catch {}
+$AccentMid = Get-MixColor $Accent '#0A0F1C' 0.45
+$AccentDark = Get-MixColor $Accent '#0A0F1C' 0.14
+
 
 # --- Fonctions partagées (UI + tâches en arrière-plan) ------------------------
 $Helpers = @'
@@ -331,7 +368,7 @@ foreach ($t in $Tweaks) {
 function Get-Tweak([string]$Id) { $Tweaks | Where-Object { $_.Id -eq $Id } | Select-Object -First 1 }
 
 # --- Fenêtre principale (XAML) ----------------------------------------------
-[xml]$Xaml = @'
+$XamlText = @'
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="Velox Tweaks" Width="1300" Height="820" MinWidth="1050" MinHeight="640"
@@ -486,6 +523,9 @@ function Get-Tweak([string]$Id) { $Tweaks | Where-Object { $_.Id -eq $Id } | Sel
           <RadioButton x:Name="NavGame" Tag="gamemode" GroupName="nav" Style="{StaticResource Nav}">
             <StackPanel><TextBlock Text="Velox Game Mode" FontSize="13" FontWeight="SemiBold" Foreground="#E6EAF2"/><TextBlock Text="Plan performances ultime" FontSize="10.5" Foreground="#6B7488" Margin="0,2,0,0"/></StackPanel>
           </RadioButton>
+          <RadioButton x:Name="NavSettings" Tag="settings" GroupName="nav" Style="{StaticResource Nav}">
+            <StackPanel><TextBlock Text="Paramètres" FontSize="13" FontWeight="SemiBold" Foreground="#E6EAF2"/><TextBlock Text="Arrière-plan, couleur, à propos" FontSize="10.5" Foreground="#6B7488" Margin="0,2,0,0"/></StackPanel>
+          </RadioButton>
         </StackPanel>
       </DockPanel>
     </Border>
@@ -496,7 +536,9 @@ function Get-Tweak([string]$Id) { $Tweaks | Where-Object { $_.Id -eq $Id } | Sel
   </Grid>
 </Window>
 '@
+[xml]$Xaml = $XamlText.Replace('#2D7BFF', $Accent).Replace('#24406F', $AccentMid).Replace('#101B33', $AccentDark)
 $Window = [Windows.Markup.XamlReader]::Load((New-Object System.Xml.XmlNodeReader $Xaml))
+try { $icoFile = Join-Path $ScriptDir 'build\velox.ico'; if (Test-Path $icoFile) { $Window.Icon = [Windows.Media.Imaging.BitmapFrame]::Create([Uri]$icoFile) } } catch {}
 function UI([string]$Name) { $Window.FindName($Name) }
 $BusyPill = UI 'BusyPill'; $BusyText = UI 'BusyText'; $PageHost = UI 'PageHost'
 (UI 'VersionText').Text = "Velox Tweaks $AppVersion"
@@ -648,6 +690,7 @@ function Update-Job {
     Set-Busy $false
     Add-Log ("{0} : {1}" -f $j.Title, $(if ($ok) { 'terminé' } else { 'échec' }))
     Update-Status
+    try { if ($script:CheckupShown -and $Pages['tools'].Visibility -eq 'Visible') { Invoke-Checkup } else { Update-Score } } catch {}
     if ($j.OnDone) { try { & $j.OnDone $lines } catch {} }
     if ($j.Restart) {
         $r = [Windows.MessageBox]::Show("« $($j.Title) » nécessite un redémarrage pour être pris en compte.`n`nRedémarrer maintenant ?", 'Velox Tweaks', 'YesNo', 'Question')
@@ -740,17 +783,34 @@ $bRev = New-Button 'Tout annuler' 'Danger'; $bRev.Padding = Th '14,9'
 foreach ($b in $bOpt, $bRp, $bRev) { [void]$oneRow.Children.Add($b) }
 $recNames = ($Tweaks | Where-Object { $_.Rec } | ForEach-Object { $_.Name }) -join "`n • "
 $BoostIds = @('hags', 'nicpower', 'nagle', 'dynamictick')
-$bOpt.Add_Click({
+function Invoke-Booster {
     $boost = @($Tweaks | Where-Object { $_.Rec -or ($BoostIds -contains $_.Id) })
     $names = ($boost | ForEach-Object { $_.Name }) -join "`n • "
     $msg = "Le BOOSTER va appliquer {0} réglages + le Velox Game Mode :`n`n • {1}`n`nUn point de restauration est créé avant. Un redémarrage est nécessaire à la fin.`nSur un portable, la batterie se videra plus vite." -f $boost.Count, $names
     if (Confirm-Action $msg) {
         Invoke-Tweaks $boost $false 'BOOSTER' $true $GameModeCode $true
     }
-})
+}
+$bOpt.Add_Click({ Invoke-Booster })
 $bRp.Add_Click({ Start-Task 'Point de restauration' $RestoreCode })
 $bRev.Add_Click({ Invoke-RevertAll })
 [void]$pg.Children.Add((New-Panel 'Booster en un clic' 'Applique tous les meilleurs réglages dʼun coup (FPS, latence, réseau, souris, clavier, plan performances), même ceux qui demandent un redémarrage.' $oneRow))
+
+# Score d'optimisation
+$scoreGrid = New-Object Windows.Controls.Grid
+$sc0 = New-Object Windows.Controls.ColumnDefinition; $sc0.Width = [Windows.GridLength]::new(170)
+$sc1 = New-Object Windows.Controls.ColumnDefinition; $sc1.Width = [Windows.GridLength]::new(1, 'Star')
+$scoreGrid.ColumnDefinitions.Add($sc0); $scoreGrid.ColumnDefinitions.Add($sc1)
+$scoreLeft = New-Object Windows.Controls.StackPanel
+$ScoreBig = New-Text '…' 42 '#FFFFFF' 'Bold'
+$ScoreLbl = New-Text 'Calcul en cours…' 12 '#7D879B'
+[void]$scoreLeft.Children.Add($ScoreBig); [void]$scoreLeft.Children.Add($ScoreLbl)
+[void]$scoreGrid.Children.Add($scoreLeft)
+$ScoreMissing = New-Object Windows.Controls.StackPanel; $ScoreMissing.VerticalAlignment = 'Center'
+[Windows.Controls.Grid]::SetColumn($ScoreMissing, 1); [void]$scoreGrid.Children.Add($ScoreMissing)
+$bScoreGo = New-Button 'Voir le check-up' 'Ghost'
+$bScoreGo.Add_Click({ (UI 'NavTools').IsChecked = $true; Invoke-Checkup })
+[void]$pg.Children.Add((New-Panel 'Score dʼoptimisation' 'Note sur 100 : les réglages Velox + ce qui compte vraiment (écran, RAM, réseau, pilote, démarrage).' $scoreGrid $bScoreGo))
 
 # Infos système
 $sys = New-Grid 4; $sys.Margin = Th '-5,0,-5,16'
@@ -843,7 +903,7 @@ $TweakHeader.Margin = Th '0,3,0,0'
 [void]$tweakPanel.Child.Children[0].Children[1].Children.Add($TweakHeader)
 
 function Update-CardLook($t) {
-    if ($t.CheckBox.IsChecked) { $t.Card.Background = Br '#0F1A33'; $t.Card.BorderBrush = Br '#2B5CC4' }
+    if ($t.CheckBox.IsChecked) { $t.Card.Background = Br $AccentDark; $t.Card.BorderBrush = Br $AccentMid }
     else { $t.Card.Background = Br '#0E1424'; $t.Card.BorderBrush = Br '#1A2236' }
 }
 function Get-Selected { @($Tweaks | Where-Object { $_.CheckBox.IsChecked }) }
@@ -854,7 +914,7 @@ function Update-TweakHeader {
 }
 function Set-Filter([string]$Cat) {
     foreach ($fb in $FilterButtons) {
-        if ($fb.Tag -eq $Cat) { $fb.Background = Br '#16264A'; $fb.BorderBrush = Br '#2D7BFF' }
+        if ($fb.Tag -eq $Cat) { $fb.Background = Br $AccentDark; $fb.BorderBrush = Br $Accent }
         else { $fb.Background = Br '#0E1424'; $fb.BorderBrush = Br '#262F45' }
     }
     foreach ($t in $Tweaks) { $t.Card.Visibility = $(if ($Cat -eq 'Tous' -or $t.Cat -eq $Cat) { 'Visible' } else { 'Collapsed' }) }
@@ -880,6 +940,36 @@ function Invoke-RevertAll {
         Invoke-Tweaks $active $true 'Annulation de tous les tweaks' $false
     }
 }
+# Profils : partager une sélection de tweaks
+$profBody = New-Object Windows.Controls.StackPanel
+$ProfBox = New-Input '' 0
+$ProfBox.Width = [double]::NaN; $ProfBox.HorizontalAlignment = 'Stretch'; $ProfBox.Margin = Th '0,0,0,10'
+[void]$profBody.Children.Add($ProfBox)
+$profRow = New-Object Windows.Controls.WrapPanel
+$bProfCopy = New-Button 'Copier ma sélection' 'Primary'; $bProfCopy.Margin = Th '0,0,8,0'
+$bProfActive = New-Button 'Sélectionner mes tweaks actifs' 'Ghost'; $bProfActive.Margin = Th '0,0,8,0'
+$bProfLoad = New-Button 'Charger le code' 'Ghost'
+foreach ($b in $bProfCopy, $bProfActive, $bProfLoad) { [void]$profRow.Children.Add($b) }
+[void]$profBody.Children.Add($profRow)
+$bProfActive.Add_Click({ foreach ($t in $Tweaks) { $t.CheckBox.IsChecked = [bool]$t.Active } })
+$bProfCopy.Add_Click({
+    $ids = @(Get-Selected | ForEach-Object { $_.Id })
+    if ($ids.Count -eq 0) { $ids = @($Tweaks | Where-Object { $_.Active } | ForEach-Object { $_.Id }) }
+    if ($ids.Count -eq 0) { Add-Log 'Aucun tweak sélectionné ou actif à partager.'; return }
+    $code = 'VELOX1:' + ($ids -join ',')
+    $ProfBox.Text = $code
+    try { [Windows.Clipboard]::SetText($code); Add-Log "Code de profil copié ($($ids.Count) tweaks) : colle-le à ton ami." } catch { Add-Log 'Code affiché : copie-le à la main.' }
+})
+$bProfLoad.Add_Click({
+    $txt = ([string]$ProfBox.Text).Trim()
+    if ($txt -notmatch '^VELOX1:') { Add-Log 'Code invalide : il doit commencer par VELOX1:'; return }
+    $ids = @(($txt -replace '^VELOX1:', '') -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+    $n = 0
+    foreach ($t in $Tweaks) { $on = $ids -contains $t.Id; $t.CheckBox.IsChecked = $on; if ($on) { $n++ } }
+    Set-Filter 'Tous'
+    Add-Log "$n tweak(s) sélectionné(s) depuis le code. Clique sur « Appliquer la sélection »."
+})
+[void]$pg.Children.Add((New-Panel 'Profils' 'Partage ta sélection avec un ami : « Copier ma sélection » crée un code. Lui le colle ici, clique sur « Charger le code » puis applique.' $profBody))
 [void]$pg.Children.Add((New-ActivityPanel 'Activité des tweaks'))
 
 # ===== MAINTENANCE =====
@@ -1148,34 +1238,28 @@ if ($t.Count -gt 0) {
 })
 [void]$pg.Children.Add((New-Panel 'Test de ping' 'Mesure la qualité de ta connexion. Le ping en jeu dépend aussi de la distance jusqu''au serveur.' $pingBody))
 
-# --- Check-up gaming ----------------------------------------------------------
+# --- Check-up gaming + score -------------------------------------------------------
 $CheckList = New-Object Windows.Controls.StackPanel
 $bCheck = New-Button 'Analyser mon PC' 'Primary'
 [void]$CheckList.Children.Add((New-Text 'Clique sur « Analyser mon PC » pour vérifier les réglages qui changent vraiment les FPS et la réactivité.' 12 '#AEB6C6'))
-function Add-CheckRow([string]$Kind, [string]$Title, [string]$Detail) {
-    $map = @{ ok = @('✔', '#4ADE80'); warn = @('⚠', '#F5B83D'); info = @('ℹ', '#60A5FA') }
-    $g = New-Object Windows.Controls.Grid; $g.Margin = Th '0,0,0,10'
-    $c0 = New-Object Windows.Controls.ColumnDefinition; $c0.Width = [Windows.GridLength]::new(28)
-    $c1 = New-Object Windows.Controls.ColumnDefinition; $c1.Width = [Windows.GridLength]::new(1, 'Star')
-    $g.ColumnDefinitions.Add($c0); $g.ColumnDefinitions.Add($c1)
-    [void]$g.Children.Add((New-Text $map[$Kind][0] 15 $map[$Kind][1] 'Bold'))
-    $sp = New-Object Windows.Controls.StackPanel
-    [void]$sp.Children.Add((New-Text $Title 12.5 '#E6EAF2' 'SemiBold'))
-    [void]$sp.Children.Add((New-Text $Detail 11.2 '#8A93A6' 'Normal' '0,2,0,0'))
-    [Windows.Controls.Grid]::SetColumn($sp, 1); [void]$g.Children.Add($sp)
-    [void]$CheckList.Children.Add($g)
+$script:CheckupShown = $false
+$script:HwChecks = $null
+$script:Hz = 0
+
+function New-Check([string]$Kind, [string]$Title, [string]$Detail, [int]$Pts, [int]$Max, [string]$FixLabel = '', [scriptblock]$Fix = $null) {
+    [pscustomobject]@{ Kind = $Kind; Title = $Title; Detail = $Detail; Pts = $Pts; Max = $Max; FixLabel = $FixLabel; Fix = $Fix }
 }
-function Invoke-Checkup {
-    $CheckList.Children.Clear()
-    $hz = 0
+function Get-HwChecks {
+    $out = @()
     # Écran
     try {
         $vc = Get-CimInstance Win32_VideoController | Where-Object { $_.CurrentRefreshRate -gt 0 -and $_.Name -notmatch 'Basic|Virtual|Remote' } | Select-Object -First 1
-        $hz = [int]$vc.CurrentRefreshRate; $max = [int]$vc.MaxRefreshRate
-        if ($hz -le 60 -and $max -gt 60) { Add-CheckRow 'warn' "Écran à $hz Hz alors qu'il peut monter à $max Hz" 'Paramètres > Système > Écran > Affichage avancé > Fréquence d''actualisation : choisis la plus haute.' }
-        elseif ($max -gt $hz + 1) { Add-CheckRow 'warn' "Écran à $hz Hz (max détecté : $max Hz)" 'Vérifie la fréquence dans Paramètres > Système > Écran > Affichage avancé.' }
-        else { Add-CheckRow 'ok' "Écran à $hz Hz" 'Ton écran tourne à sa fréquence maximale détectée.' }
-    } catch { Add-CheckRow 'info' 'Écran' 'Impossible de lire la fréquence.' }
+        $hz = [int]$vc.CurrentRefreshRate; $max = [int]$vc.MaxRefreshRate; $script:Hz = $hz
+        $fx = { Start-Process 'ms-settings:display-advanced' }
+        if ($hz -le 60 -and $max -gt 60) { $out += New-Check 'warn' "Écran à $hz Hz alors qu'il peut monter à $max Hz" 'Choisis la fréquence la plus haute dans Affichage avancé.' 0 15 'Ouvrir les réglages' $fx }
+        elseif ($max -gt $hz + 1) { $out += New-Check 'warn' "Écran à $hz Hz (max détecté : $max Hz)" 'Vérifie la fréquence dans Affichage avancé.' 5 15 'Ouvrir les réglages' $fx }
+        else { $out += New-Check 'ok' "Écran à $hz Hz" 'Ton écran tourne à sa fréquence maximale détectée.' 15 15 }
+    } catch { $out += New-Check 'info' 'Écran' 'Impossible de lire la fréquence.' 8 15 }
     # RAM / XMP
     try {
         $mem = @(Get-CimInstance Win32_PhysicalMemory)
@@ -1183,54 +1267,273 @@ function Invoke-Checkup {
         $type = [int]($mem | Select-Object -First 1).SMBIOSMemoryType
         $gen = switch ($type) { 34 { 'DDR5' } 26 { 'DDR4' } default { 'RAM' } }
         $slow = ($type -eq 34 -and $cfg -le 4800) -or ($type -eq 26 -and $cfg -le 2666)
-        if ($slow) { Add-CheckRow 'warn' "$gen à $cfg MT/s : XMP probablement désactivé" 'Active XMP (Intel) ou EXPO (AMD) dans le BIOS : ta RAM ira à sa vraie vitesse. Gros gain de FPS sur CPU Intel.' }
-        else { Add-CheckRow 'ok' "$gen à $cfg MT/s · $($mem.Count) barrette(s)" 'La RAM semble tourner à une vitesse correcte (XMP/EXPO actif).' }
-    } catch { Add-CheckRow 'info' 'RAM' 'Impossible de lire la vitesse de la RAM.' }
+        $fx = {
+            if (Confirm-Action "Ton PC va redémarrer directement dans le BIOS.`n`nLà-bas, cherche XMP (Intel) ou EXPO (AMD), choisis « Profil 1 », puis sauvegarde avec F10.`n`nEnregistre ton travail avant. Continuer ?") {
+                try { Start-Process shutdown.exe -ArgumentList '/r /fw /t 3' -ErrorAction Stop } catch { [void][Windows.MessageBox]::Show('Impossible de redémarrer dans le BIOS automatiquement. Redémarre et appuie sur Suppr ou F2 au démarrage.', 'Velox Tweaks') }
+            }
+        }
+        if ($slow) { $out += New-Check 'warn' "$gen à $cfg MT/s : XMP probablement désactivé" 'Active XMP (Intel) ou EXPO (AMD) dans le BIOS : ta RAM ira à sa vraie vitesse. Gros gain de FPS sur CPU Intel.' 0 15 'Redémarrer dans le BIOS' $fx }
+        else { $out += New-Check 'ok' "$gen à $cfg MT/s · $($mem.Count) barrette(s)" 'La RAM semble tourner à une vitesse correcte (XMP/EXPO actif).' 15 15 }
+    } catch { $out += New-Check 'info' 'RAM' 'Impossible de lire la vitesse de la RAM.' 8 15 }
     # Réseau
     try {
         $up = @(Get-NetAdapter -Physical -ErrorAction Stop | Where-Object { $_.Status -eq 'Up' })
         $eth = @($up | Where-Object { $_.PhysicalMediaType -match '802\.3' -or ($_.Name -match 'Ethernet' -and $_.PhysicalMediaType -notmatch '802\.11') })
         $wifi = @($up | Where-Object { $_.PhysicalMediaType -match '802\.11' -or $_.Name -match 'Wi-?Fi|WLAN|Wireless' })
-        if ($eth.Count) { Add-CheckRow 'ok' "Connecté en câble Ethernet ($($eth[0].LinkSpeed))" 'Idéal pour un ping stable.' }
-        elseif ($wifi.Count) { Add-CheckRow 'warn' 'Connecté en Wi-Fi' 'Un câble Ethernet donne un ping plus bas et sans pics de lag. C''est le plus gros gain possible pour le ping.' }
-        else { Add-CheckRow 'info' 'Réseau' 'Aucune carte réseau active détectée.' }
-    } catch { Add-CheckRow 'info' 'Réseau' 'Impossible de lire les cartes réseau.' }
-    # HAGS
-    if ((Get-Reg 'HKLM:\SYSTEM\CurrentControlSet\Control\GraphicsDrivers' HwSchMode) -eq 2) { Add-CheckRow 'ok' 'Planification GPU accélérée activée' 'Nécessaire pour le DLSS Frame Generation sur les cartes RTX 40.' }
-    else { Add-CheckRow 'warn' 'Planification GPU accélérée désactivée' 'Active-la dans l''onglet Tweaks (HAGS) : obligatoire pour le DLSS Frame Generation sur RTX 40.' }
-    # Souris
-    if ((Get-Reg 'HKCU:\Control Panel\Mouse' MouseSpeed) -eq '0') { Add-CheckRow 'ok' 'Accélération souris désactivée' 'Visée 1:1, indispensable pour une sensi constante.' }
-    else { Add-CheckRow 'warn' 'Accélération souris activée' 'Désactive-la (onglet Tweaks) pour que ta visée soit toujours la même.' }
-    $ptr = Get-Reg 'HKCU:\Control Panel\Mouse' MouseSensitivity
-    if ($ptr -and $ptr -ne '10') { Add-CheckRow 'info' "Vitesse du pointeur Windows : $ptr/20" 'La valeur neutre est 10/20 (6e cran). Les jeux en raw input l''ignorent, mais certains non.' }
-    else { Add-CheckRow 'ok' 'Vitesse du pointeur Windows neutre (10/20)' 'Pas de multiplication parasite de ta sensi.' }
-    # Plan d'alimentation
-    $plan = [regex]::Match((powercfg /getactivescheme | Out-String), '\((.+)\)').Groups[1].Value
-    if ($plan -match 'Velox|Ultimate|Performance|performances') { Add-CheckRow 'ok' "Plan d'alimentation : $plan" 'Le CPU reste à pleine vitesse en jeu.' }
-    else { Add-CheckRow 'info' "Plan d'alimentation : $plan" 'Pour jouer, active le plan performances (onglet Velox Game Mode).' }
+        if ($eth.Count) { $out += New-Check 'ok' "Connecté en câble Ethernet ($($eth[0].LinkSpeed))" 'Idéal pour un ping stable.' 10 10 }
+        elseif ($wifi.Count) { $out += New-Check 'warn' 'Connecté en Wi-Fi' 'Un câble Ethernet donne un ping plus bas et sans pics de lag. C''est le plus gros gain possible pour le ping.' 3 10 }
+        else { $out += New-Check 'info' 'Réseau' 'Aucune carte réseau active détectée.' 5 10 }
+    } catch { $out += New-Check 'info' 'Réseau' 'Impossible de lire les cartes réseau.' 5 10 }
     # Pilote GPU
     try {
         $g = Get-CimInstance Win32_VideoController | Where-Object { $_.Name -match 'NVIDIA|AMD|Radeon|Intel\(R\) Arc' } | Select-Object -First 1
         if ($g -and $g.DriverDate) {
             $age = [int]((Get-Date) - $g.DriverDate).TotalDays
-            if ($age -gt 120) { Add-CheckRow 'warn' "Pilote graphique vieux de $age jours" 'Mets à jour ton pilote (appli NVIDIA / AMD Adrenalin) : les nouveaux jeux sont optimisés dans les pilotes récents.' }
-            else { Add-CheckRow 'ok' "Pilote graphique récent ($age jours)" "$($g.Name) · version $($g.DriverVersion)" }
-        }
-    } catch {}
+            $url = if ($g.Name -match 'NVIDIA') { 'https://www.nvidia.com/fr-fr/software/nvidia-app/' } elseif ($g.Name -match 'AMD|Radeon') { 'https://www.amd.com/fr/support/download/drivers.html' } else { 'https://www.intel.fr/content/www/fr/fr/download-center/home.html' }
+            $fx = [scriptblock]::Create("Start-Process '$url'")
+            if ($age -gt 120) { $out += New-Check 'warn' "Pilote graphique vieux de $age jours" 'Mets à jour ton pilote : les nouveaux jeux sont optimisés dans les pilotes récents.' 0 10 'Télécharger le pilote' $fx }
+            else { $out += New-Check 'ok' "Pilote graphique récent ($age jours)" "$($g.Name) · version $($g.DriverVersion)" 10 10 }
+        } else { $out += New-Check 'info' 'Pilote graphique' 'Carte graphique non reconnue.' 5 10 }
+    } catch { $out += New-Check 'info' 'Pilote graphique' 'Impossible de lire le pilote.' 5 10 }
     # Disque
     try {
         $c = Get-CimInstance Win32_LogicalDisk -Filter "DeviceID='$env:SystemDrive'"
         $pct = [math]::Round($c.FreeSpace / $c.Size * 100)
         $free = [math]::Round($c.FreeSpace / 1GB)
-        if ($pct -lt 15) { Add-CheckRow 'warn' "Disque $env:SystemDrive presque plein ($free Go libres, $pct %)" 'Garde au moins 15 % de libre : fais le nettoyage dans Maintenance.' }
-        else { Add-CheckRow 'ok' "Disque $env:SystemDrive : $free Go libres ($pct %)" 'Assez de place libre.' }
-    } catch {}
-    # Conseil FPS cap
-    if ($hz -gt 60) { Add-CheckRow 'info' "Limite de FPS conseillée : $($hz - 3) FPS (avec G-Sync / FreeSync)" "Avec G-Sync, limite tes FPS à $($hz - 3) et active NVIDIA Reflex dans le jeu : image fluide et latence minimale." }
-    Add-Log 'Check-up gaming terminé'
+        if ($pct -lt 15) { $out += New-Check 'warn' "Disque $env:SystemDrive presque plein ($free Go libres, $pct %)" 'Garde au moins 15 % de libre.' 0 5 'Ouvrir Maintenance' { (UI 'NavMaintenance').IsChecked = $true } }
+        else { $out += New-Check 'ok' "Disque $env:SystemDrive : $free Go libres ($pct %)" 'Assez de place libre.' 5 5 }
+    } catch { $out += New-Check 'info' 'Disque' 'Impossible de lire le disque.' 3 5 }
+    $out
 }
-$bCheck.Add_Click({ Invoke-Checkup })
-[void]$pg.Children.Add((New-Panel 'Check-up gaming' 'Les réglages qui comptent vraiment : écran, RAM, réseau, souris, pilote.' $CheckList $bCheck))
+function Get-HealthChecks([switch]$Refresh) {
+    if ($Refresh -or -not $script:HwChecks) { $script:HwChecks = @(Get-HwChecks) }
+    $list = New-Object System.Collections.ArrayList
+    foreach ($c in $script:HwChecks) { [void]$list.Add($c) }
+    # Tweaks recommandés
+    $rec = @($Tweaks | Where-Object { $_.Rec }); $recOn = @($rec | Where-Object { $_.Active }).Count
+    $pts = [int][math]::Round(25 * $recOn / [math]::Max(1, $rec.Count))
+    if ($recOn -ge $rec.Count) { [void]$list.Add((New-Check 'ok' "Tous les tweaks recommandés sont actifs ($recOn/$($rec.Count))" 'Windows est réglé pour le jeu.' 25 25)) }
+    else { [void]$list.Add((New-Check 'warn' "Tweaks recommandés : $recOn/$($rec.Count) actifs" 'Le BOOSTER applique tous les meilleurs réglages en un clic.' $pts 25 'Lancer le BOOSTER' { Invoke-Booster })) }
+    # HAGS
+    if ((Get-Reg 'HKLM:\SYSTEM\CurrentControlSet\Control\GraphicsDrivers' HwSchMode) -eq 2) { [void]$list.Add((New-Check 'ok' 'Planification GPU accélérée activée' 'Nécessaire pour le DLSS Frame Generation sur les cartes RTX 40.' 5 5)) }
+    else { [void]$list.Add((New-Check 'warn' 'Planification GPU accélérée désactivée' 'Obligatoire pour le DLSS Frame Generation sur RTX 40.' 0 5 'Activer (redémarrage)' { Invoke-Tweaks @(Get-Tweak 'hags') $false 'Activation HAGS' $false })) }
+    # Souris
+    if ((Get-Reg 'HKCU:\Control Panel\Mouse' MouseSpeed) -eq '0') { [void]$list.Add((New-Check 'ok' 'Accélération souris désactivée' 'Visée 1:1, indispensable pour une sensi constante.' 5 5)) }
+    else { [void]$list.Add((New-Check 'warn' 'Accélération souris activée' 'Ta visée change selon la vitesse de ta main.' 0 5 'Désactiver' { Invoke-Tweaks @(Get-Tweak 'mouseaccel') $false 'Accélération souris' $false })) }
+    $ptr = Get-Reg 'HKCU:\Control Panel\Mouse' MouseSensitivity
+    if ($ptr -and $ptr -ne '10') { [void]$list.Add((New-Check 'info' "Vitesse du pointeur Windows : $ptr/20" 'La valeur neutre est 10/20. Les jeux en raw input l''ignorent, mais certains non.' 0 0 'Remettre à 10' { Set-Reg 'HKCU:\Control Panel\Mouse' MouseSensitivity '10' 'String'; Add-Log 'Vitesse du pointeur remise à 10/20 (actif après déconnexion)' })) }
+    # Plan d'alimentation
+    $plan = [regex]::Match((powercfg /getactivescheme | Out-String), '\((.+)\)').Groups[1].Value
+    if ($plan -match 'Velox|Ultimate|Performance|performances') { [void]$list.Add((New-Check 'ok' "Plan dʼalimentation : $plan" 'Le CPU reste à pleine vitesse en jeu.' 5 5)) }
+    else { [void]$list.Add((New-Check 'warn' "Plan dʼalimentation : $plan" 'Le plan performances garde ton CPU à fond en jeu.' 0 5 'Activer le plan Velox' { Start-Task 'Plan performances' 'Enable-VeloxPlan' })) }
+    # Démarrage
+    try {
+        $on = @(Get-StartupItems | Where-Object { $_.Enabled }).Count
+        $p = if ($on -le 8) { 5 } elseif ($on -le 15) { 2 } else { 0 }
+        if ($p -eq 5) { [void]$list.Add((New-Check 'ok' "$on programme(s) au démarrage" 'Démarrage léger.' 5 5)) }
+        else { [void]$list.Add((New-Check 'warn' "$on programmes lancés avec Windows" 'Décoche ceux dont tu nʼas pas besoin dès lʼallumage.' $p 5 'Gérer le démarrage' { (UI 'NavStartup').IsChecked = $true })) }
+    } catch {}
+    if ($script:Hz -gt 60) { [void]$list.Add((New-Check 'info' "Limite de FPS conseillée : $($script:Hz - 3) FPS (avec G-Sync / FreeSync)" "Avec G-Sync, limite tes FPS à $($script:Hz - 3) et active NVIDIA Reflex dans le jeu : image fluide et latence minimale." 0 0)) }
+    $list
+}
+function Add-CheckRow($Chk) {
+    $map = @{ ok = @('✔', '#4ADE80'); warn = @('⚠', '#F5B83D'); info = @('ℹ', '#60A5FA') }
+    $g = New-Object Windows.Controls.Grid; $g.Margin = Th '0,0,0,10'
+    $c0 = New-Object Windows.Controls.ColumnDefinition; $c0.Width = [Windows.GridLength]::new(28)
+    $c1 = New-Object Windows.Controls.ColumnDefinition; $c1.Width = [Windows.GridLength]::new(1, 'Star')
+    $c2 = New-Object Windows.Controls.ColumnDefinition; $c2.Width = [Windows.GridLength]::Auto
+    $g.ColumnDefinitions.Add($c0); $g.ColumnDefinitions.Add($c1); $g.ColumnDefinitions.Add($c2)
+    [void]$g.Children.Add((New-Text $map[$Chk.Kind][0] 15 $map[$Chk.Kind][1] 'Bold'))
+    $sp = New-Object Windows.Controls.StackPanel
+    $title = $Chk.Title
+    if ($Chk.Max -gt 0) { $title = "$title   ($($Chk.Pts)/$($Chk.Max) pts)" }
+    [void]$sp.Children.Add((New-Text $title 12.5 '#E6EAF2' 'SemiBold'))
+    [void]$sp.Children.Add((New-Text $Chk.Detail 11.2 '#8A93A6' 'Normal' '0,2,0,0'))
+    [Windows.Controls.Grid]::SetColumn($sp, 1); [void]$g.Children.Add($sp)
+    if ($Chk.Fix) {
+        $b = New-Button $Chk.FixLabel 'Primary'; $b.VerticalAlignment = 'Center'; $b.Margin = Th '12,0,0,0'; $b.Padding = Th '12,6'
+        $b.Tag = $Chk.Fix
+        $b.Add_Click({ & $this.Tag; if (-not $script:Job) { Invoke-Checkup } })
+        [Windows.Controls.Grid]::SetColumn($b, 2); [void]$g.Children.Add($b)
+    }
+    [void]$CheckList.Children.Add($g)
+}
+function Invoke-Checkup([switch]$Refresh) {
+    $CheckList.Children.Clear()
+    $checks = @(Get-HealthChecks -Refresh:$Refresh)
+    foreach ($c in $checks) { Add-CheckRow $c }
+    $script:CheckupShown = $true
+    Update-Score $checks
+}
+function Update-Score($Checks = $null) {
+    if (-not $Checks) { $Checks = @(Get-HealthChecks) }
+    $score = [int](($Checks | Measure-Object -Property Pts -Sum).Sum)
+    $ScoreBig.Text = "$score/100"
+    $ScoreBig.Foreground = Br $(if ($score -ge 85) { '#4ADE80' } elseif ($score -ge 65) { '#F5B83D' } else { '#F87171' })
+    $ScoreLbl.Text = $(if ($score -ge 85) { 'Excellent' } elseif ($score -ge 65) { 'Bien, mais peut mieux faire' } else { 'À améliorer' })
+    $ScoreMissing.Children.Clear()
+    $miss = @($Checks | Where-Object { $_.Max -gt $_.Pts } | Sort-Object { $_.Max - $_.Pts } -Descending | Select-Object -First 4)
+    if ($miss.Count -eq 0) { [void]$ScoreMissing.Children.Add((New-Text 'Rien à améliorer : ton PC est au top ! 🏆' 12.5 '#4ADE80' 'SemiBold')) }
+    foreach ($m in $miss) { [void]$ScoreMissing.Children.Add((New-Text ("• {0}   (+{1} pts)" -f $m.Title, ($m.Max - $m.Pts)) 12 '#AEB6C6' 'Normal' '0,2,0,2')) }
+}
+$bCheck.Add_Click({ Invoke-Checkup -Refresh; Add-Log 'Check-up gaming terminé' })
+[void]$pg.Children.Add((New-Panel 'Check-up gaming' 'Les réglages qui comptent vraiment, avec un bouton pour corriger directement.' $CheckList $bCheck))
+
+# --- Fonctions Windows natives (viseur + test de polling) -----------------------------
+function Initialize-Native {
+    if ('Velox.Native' -as [type]) { return }
+    Add-Type -Namespace Velox -Name Native -MemberDefinition @'
+[DllImport("user32.dll")] public static extern int GetWindowLong(IntPtr hWnd, int nIndex);
+[DllImport("user32.dll")] public static extern int SetWindowLong(IntPtr hWnd, int nIndex, int dwNewLong);
+[StructLayout(LayoutKind.Sequential)] public struct RAWINPUTDEVICE { public ushort UsagePage; public ushort Usage; public uint Flags; public IntPtr Target; }
+[DllImport("user32.dll", SetLastError = true)] public static extern bool RegisterRawInputDevices(RAWINPUTDEVICE[] devices, uint count, uint size);
+'@
+}
+
+# --- Viseur personnalisé -----------------------------------------------------------------
+$script:CrossWin = $null
+function Get-CrossCanvas {
+    if ($script:CrossWin) { return $script:CrossWin.Content }
+    $w = New-Object Windows.Window
+    $w.WindowStyle = 'None'; $w.AllowsTransparency = $true; $w.Background = [Windows.Media.Brushes]::Transparent
+    $w.Topmost = $true; $w.ShowInTaskbar = $false; $w.ShowActivated = $false; $w.Focusable = $false
+    $w.IsHitTestVisible = $false; $w.ResizeMode = 'NoResize'; $w.Width = 200; $w.Height = 200
+    $w.Left = ([Windows.SystemParameters]::PrimaryScreenWidth - 200) / 2
+    $w.Top = ([Windows.SystemParameters]::PrimaryScreenHeight - 200) / 2
+    $cv = New-Object Windows.Controls.Canvas; $cv.IsHitTestVisible = $false; $w.Content = $cv
+    $w.Add_SourceInitialized({
+        try {
+            Initialize-Native
+            $h = (New-Object Windows.Interop.WindowInteropHelper $this).Handle
+            $ex = [Velox.Native]::GetWindowLong($h, -20)
+            [void][Velox.Native]::SetWindowLong($h, -20, ($ex -bor 0x20 -bor 0x80 -bor 0x80000 -bor 0x08000000))
+        } catch {}
+    })
+    $script:CrossWin = $w
+    $cv
+}
+function Add-CrossShape($Cv, $Shape, [double]$X, [double]$Y) {
+    [Windows.Controls.Canvas]::SetLeft($Shape, $X); [Windows.Controls.Canvas]::SetTop($Shape, $Y); [void]$Cv.Children.Add($Shape)
+}
+function New-CrossRect([double]$W, [double]$H, $Fill) { $r = New-Object Windows.Shapes.Rectangle; $r.Width = $W; $r.Height = $H; $r.Fill = $Fill; $r }
+function New-CrossEllipse([double]$D, $Fill, $Stroke, [double]$T) {
+    $e = New-Object Windows.Shapes.Ellipse; $e.Width = $D; $e.Height = $D
+    if ($Fill) { $e.Fill = $Fill }; if ($Stroke) { $e.Stroke = $Stroke; $e.StrokeThickness = $T }; $e
+}
+function Update-Cross {
+    $cv = Get-CrossCanvas; $cv.Children.Clear()
+    $col = Br ([string]$Settings.CrossColor); $blk = Br '#C8000000'
+    $s = [double]$Settings.CrossSize; $t = [double]$Settings.CrossThick; $g = [double]$Settings.CrossGap; $c = 100.0
+    $st = [string]$Settings.CrossStyle
+    if ($st -eq 'Cercle') {
+        Add-CrossShape $cv (New-CrossEllipse (2 * $s + 2) $null $blk ($t + 2)) ($c - $s - 1) ($c - $s - 1)
+        Add-CrossShape $cv (New-CrossEllipse (2 * $s) $null $col $t) ($c - $s) ($c - $s)
+    }
+    if ($st -like 'Croix*') {
+        $bars = @(@(($c - $g - $s), ($c - $t / 2), $s, $t), @(($c + $g), ($c - $t / 2), $s, $t), @(($c - $t / 2), ($c - $g - $s), $t, $s), @(($c - $t / 2), ($c + $g), $t, $s))
+        foreach ($b in $bars) { Add-CrossShape $cv (New-CrossRect ($b[2] + 2) ($b[3] + 2) $blk) ($b[0] - 1) ($b[1] - 1) }
+        foreach ($b in $bars) { Add-CrossShape $cv (New-CrossRect $b[2] $b[3] $col) $b[0] $b[1] }
+    }
+    if ($st -match 'point|Point|Cercle') {
+        $d = [math]::Max(3, $t + 2)
+        Add-CrossShape $cv (New-CrossEllipse ($d + 2) $blk $null 0) ($c - $d / 2 - 1) ($c - $d / 2 - 1)
+        Add-CrossShape $cv (New-CrossEllipse $d $col $null 0) ($c - $d / 2) ($c - $d / 2)
+    }
+}
+function Set-Cross([bool]$On) {
+    if ($On) { Update-Cross; $script:CrossWin.Show() } elseif ($script:CrossWin) { $script:CrossWin.Hide() }
+}
+$CrossColors = [ordered]@{ 'Vert' = '#00FF66'; 'Rouge' = '#FF3B3B'; 'Cyan' = '#00E5FF'; 'Jaune' = '#FFE600'; 'Blanc' = '#FFFFFF'; 'Magenta' = '#FF3BFF' }
+$CrossStyles = @('Croix', 'Croix + point', 'Point', 'Cercle')
+$crossBody = New-Object Windows.Controls.StackPanel
+$CrossCb = New-Object Windows.Controls.CheckBox
+$CrossCb.Content = 'Afficher le viseur au centre de lʼécran'; $CrossCb.FontSize = 13; $CrossCb.Foreground = Br '#E6EAF2'
+$CrossCb.IsChecked = [bool]$Settings.Cross; $CrossCb.Margin = Th '0,0,0,12'
+[void]$crossBody.Children.Add($CrossCb)
+$crossRow = New-Object Windows.Controls.WrapPanel
+$cbStyle = New-Combo ([string[]]$CrossStyles) 150
+$cbStyle.SelectedIndex = [math]::Max(0, [array]::IndexOf($CrossStyles, [string]$Settings.CrossStyle))
+$colNames = [string[]]@($CrossColors.Keys)
+$cbColor = New-Combo $colNames 130
+$ci = 0; for ($i = 0; $i -lt $colNames.Count; $i++) { if ($CrossColors[$colNames[$i]] -eq [string]$Settings.CrossColor) { $ci = $i } }; $cbColor.SelectedIndex = $ci
+function New-VSlider([double]$Min, [double]$Max, [double]$Val) {
+    $sl = New-Object Windows.Controls.Slider
+    $sl.Minimum = $Min; $sl.Maximum = $Max; $sl.Value = $Val; $sl.Width = 140; $sl.IsSnapToTickEnabled = $true; $sl.TickFrequency = 1
+    $sl.VerticalAlignment = 'Center'; $sl.Margin = Th '0,6,0,0'
+    $sl
+}
+$slSize = New-VSlider 2 40 ([double]$Settings.CrossSize)
+$slThick = New-VSlider 1 6 ([double]$Settings.CrossThick)
+$slGap = New-VSlider 0 15 ([double]$Settings.CrossGap)
+foreach ($f in @(@('Style', $cbStyle), @('Couleur', $cbColor), @('Taille', $slSize), @('Épaisseur', $slThick), @('Écart', $slGap))) { [void]$crossRow.Children.Add((New-Field $f[0] $f[1])) }
+[void]$crossBody.Children.Add($crossRow)
+[void]$crossBody.Children.Add((New-Text 'Marche dans les jeux en mode « fenêtré sans bordure » (borderless). En plein écran exclusif, Windows le cache. Interdit dans certains jeux compétitifs : vérifie leurs règles.' 10.5 '#6B7488' 'Normal' '0,4,0,0'))
+function Save-Cross {
+    $Settings.CrossStyle = [string]$cbStyle.SelectedItem
+    $Settings.CrossColor = $CrossColors[[string]$cbColor.SelectedItem]
+    $Settings.CrossSize = [int]$slSize.Value; $Settings.CrossThick = [int]$slThick.Value; $Settings.CrossGap = [int]$slGap.Value
+    Save-Settings
+    if ($CrossCb.IsChecked) { Update-Cross }
+}
+$cbStyle.Add_SelectionChanged({ Save-Cross }); $cbColor.Add_SelectionChanged({ Save-Cross })
+$slSize.Add_ValueChanged({ Save-Cross }); $slThick.Add_ValueChanged({ Save-Cross }); $slGap.Add_ValueChanged({ Save-Cross })
+$CrossCb.Add_Checked({ $Settings.Cross = $true; Save-Settings; Set-Cross $true })
+$CrossCb.Add_Unchecked({ $Settings.Cross = $false; Save-Settings; Set-Cross $false })
+[void]$pg.Children.Add((New-Panel 'Viseur personnalisé' 'Un viseur par-dessus tes jeux, toujours au centre de lʼécran. Il ne bloque pas la souris.' $crossBody))
+
+# --- Test du polling rate ------------------------------------------------------------------
+$script:RawCount = 0; $script:RawHook = $null
+function Set-RawMouse([bool]$On) {
+    Initialize-Native
+    $h = (New-Object Windows.Interop.WindowInteropHelper $Window).Handle
+    if ($On -and -not $script:RawHook) {
+        $src = [Windows.Interop.HwndSource]::FromHwnd($h)
+        $script:RawHook = [Windows.Interop.HwndSourceHook] { param($hw, $msg, $wp, $lp, [ref]$handled) if ($msg -eq 0x00FF) { $script:RawCount++ }; return [IntPtr]::Zero }
+        $src.AddHook($script:RawHook)
+    }
+    $d = New-Object 'Velox.Native+RAWINPUTDEVICE'
+    $d.UsagePage = 1; $d.Usage = 2
+    if ($On) { $d.Flags = 0; $d.Target = $h } else { $d.Flags = 1; $d.Target = [IntPtr]::Zero }
+    $arr = New-Object 'Velox.Native+RAWINPUTDEVICE[]' 1; $arr[0] = $d
+    [Velox.Native]::RegisterRawInputDevices($arr, 1, [uint32][Runtime.InteropServices.Marshal]::SizeOf([type]'Velox.Native+RAWINPUTDEVICE'))
+}
+$pollBody = New-Object Windows.Controls.StackPanel
+$pollArea = New-Object Windows.Controls.Border
+$pollArea.Height = 110; $pollArea.Background = Br '#0A0F1C'; $pollArea.BorderBrush = Br '#262F45'; $pollArea.BorderThickness = Th '1'
+$pollArea.CornerRadius = [Windows.CornerRadius]::new(10); $pollArea.Margin = Th '0,0,0,10'
+$PollLive = New-Text 'Clique sur « Lancer le test », puis bouge ta souris vite en cercles pendant 5 secondes.' 13 '#AEB6C6' 'SemiBold'
+$PollLive.HorizontalAlignment = 'Center'; $PollLive.VerticalAlignment = 'Center'; $PollLive.TextAlignment = 'Center'
+$pollArea.Child = $PollLive
+[void]$pollBody.Children.Add($pollArea)
+$PollResult = New-Text 'Repères : 125 Hz = vieille souris · 500 Hz = correct · 1000 Hz = idéal en jeu · 2000 Hz+ = souris haut de gamme.' 11 '#7D879B'
+[void]$pollBody.Children.Add($PollResult)
+$bPoll = New-Button 'Lancer le test' 'Primary'
+$PollTimer = New-Object Windows.Threading.DispatcherTimer
+$PollTimer.Interval = [TimeSpan]::FromMilliseconds(250)
+$PollTimer.Add_Tick({
+    $n = $script:RawCount; $script:RawCount = 0; $script:PollTicks++
+    $script:PollSamples.Add($n * 4)
+    $PollLive.Text = "$($n * 4) Hz"
+    if ($script:PollTicks -ge 20) {
+        $PollTimer.Stop()
+        try { [void](Set-RawMouse $false) } catch {}
+        $bPoll.IsEnabled = $true
+        $sorted = @($script:PollSamples | Sort-Object -Descending)
+        $peak = if ($sorted.Count -ge 3) { $sorted[2] } else { $sorted[0] }
+        if ($peak -lt 80) { $PollLive.Text = 'Pas assez de mouvement'; $PollResult.Text = 'Relance le test et bouge ta souris plus vite, sans tʼarrêter, pendant les 5 secondes.'; return }
+        $std = @(125, 250, 500, 1000, 2000, 4000, 8000) | Sort-Object { [math]::Abs($_ - $peak) } | Select-Object -First 1
+        $PollLive.Text = "≈ $std Hz"
+        $PollResult.Text = if ($std -lt 1000) { "Polling rate mesuré : environ $std Hz (pic $peak Hz). Monte-le à 1000 Hz dans le logiciel de ta souris si elle le permet : moins de latence et un suivi plus fluide." } else { "Polling rate mesuré : environ $std Hz (pic $peak Hz). Parfait pour le jeu." }
+        Add-Log "Test polling rate : environ $std Hz"
+    }
+})
+$bPoll.Add_Click({
+    try { if (-not (Set-RawMouse $true)) { throw 'Windows a refusé lʼaccès à la souris.' } } catch { $PollResult.Text = "Test impossible : $($_.Exception.Message)"; return }
+    $script:RawCount = 0; $script:PollTicks = 0; $script:PollSamples = New-Object System.Collections.Generic.List[int]
+    $bPoll.IsEnabled = $false; $PollLive.Text = 'Bouge ta souris vite en cercles…'
+    $PollTimer.Start()
+})
+[void]$pg.Children.Add((New-Panel 'Test du polling rate' 'Mesure combien de fois par seconde ta souris envoie sa position à ton PC.' $pollBody $bPoll))
 [void]$pg.Children.Add((New-ActivityPanel 'Activité'))
 
 # ===== MONITEUR =====
@@ -1418,10 +1721,6 @@ function Show-StartupItems {
 $bSuRefresh.Add_Click({ Show-StartupItems })
 
 # ===== MODE JEU AUTOMATIQUE (dans la page Velox Game Mode) =====
-$SettingsFile = Join-Path $DataRoot 'settings.json'
-$Settings = @{ AutoGame = $false; Games = 'FortniteClient-Win64-Shipping, VALORANT-Win64-Shipping, cs2, r5apex, RobloxPlayerBeta, javaw, Overwatch, cod, RustClient' }
-try { if (Test-Path $SettingsFile) { $j = Get-Content $SettingsFile -Raw | ConvertFrom-Json; foreach ($p in $j.PSObject.Properties) { $Settings[$p.Name] = $p.Value } } } catch {}
-function Save-Settings { try { $Settings | ConvertTo-Json | Set-Content -Path $SettingsFile -Encoding UTF8 } catch {} }
 
 $agBody = New-Object Windows.Controls.StackPanel
 $AutoCb = New-Object Windows.Controls.CheckBox
@@ -1490,7 +1789,7 @@ $UpdPS = [PowerShell]::Create(); $UpdPS.Runspace = $UpdRs; [void]$UpdPS.AddScrip
 $script:UpdHandled = $false
 
 $UpdBanner = New-Object Windows.Controls.Border
-$UpdBanner.Background = Br '#0F1A33'; $UpdBanner.BorderBrush = Br '#2D7BFF'; $UpdBanner.BorderThickness = Th '1'
+$UpdBanner.Background = Br $AccentDark; $UpdBanner.BorderBrush = Br $Accent; $UpdBanner.BorderThickness = Th '1'
 $UpdBanner.CornerRadius = [Windows.CornerRadius]::new(12); $UpdBanner.Padding = Th '18,14,18,14'; $UpdBanner.Margin = Th '0,0,0,16'
 $UpdBanner.Visibility = 'Collapsed'
 $ubDock = New-Object Windows.Controls.DockPanel
@@ -1534,15 +1833,136 @@ $bUpd.Add_Click({
         Copy-Item $self "$self.bak" -Force
         Move-Item $tmp $self -Force
         Add-Log "Mise à jour installée ($($UpdData.Tag)). Redémarrage de Velox…"
-        Start-Process powershell.exe -ArgumentList "-NoProfile -ExecutionPolicy Bypass -STA -WindowStyle Hidden -File `"$self`""
         $script:Job = $null
-        $Window.Close()
+        Restart-Velox
     } catch {
         Remove-Item "$PSCommandPath.new" -Force -ErrorAction SilentlyContinue
         $bUpd.IsEnabled = $true; $bUpd.Content = 'Mettre à jour'
         [void][Windows.MessageBox]::Show("La mise à jour a échoué :`n`n$($_.Exception.Message)`n`nTu peux la télécharger à la main sur github.com/$RepoSlug", 'Velox Tweaks', 'OK', 'Warning')
     }
 })
+
+# ===== PARAMÈTRES + ICÔNE PRÈS DE L'HORLOGE + LANCEMENT AVEC WINDOWS =====
+$TaskName = 'Velox Tweaks'
+function Test-Autostart { [bool](Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue) }
+function Set-Autostart([bool]$On) {
+    try {
+        if ($On) {
+            $user = "$env:USERDOMAIN\$env:USERNAME"
+            $act = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument "-NoProfile -ExecutionPolicy Bypass -STA -WindowStyle Hidden -File `"$ScriptPath`" -Tray" -WorkingDirectory $ScriptDir
+            $trg = New-ScheduledTaskTrigger -AtLogOn -User $user
+            $prn = New-ScheduledTaskPrincipal -UserId $user -LogonType Interactive -RunLevel Highest
+            $set = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit ([TimeSpan]::Zero)
+            Register-ScheduledTask -TaskName $TaskName -Action $act -Trigger $trg -Principal $prn -Settings $set -Force -ErrorAction Stop | Out-Null
+            Add-Log 'Velox se lancera avec Windows (près de lʼhorloge).'
+        } else {
+            Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false -ErrorAction SilentlyContinue
+            Add-Log 'Velox ne se lancera plus avec Windows.'
+        }
+    } catch { Add-Log "Lancement avec Windows : impossible ($($_.Exception.Message))" }
+}
+
+# Icône près de l'horloge
+$TrayIcon = New-Object System.Windows.Forms.NotifyIcon
+$icoPath = Join-Path $ScriptDir 'build\velox.ico'
+try { $TrayIcon.Icon = if (Test-Path $icoPath) { New-Object System.Drawing.Icon $icoPath } else { [System.Drawing.SystemIcons]::Application } } catch { $TrayIcon.Icon = [System.Drawing.SystemIcons]::Application }
+$TrayIcon.Text = 'Velox Tweaks'
+$trayMenu = New-Object System.Windows.Forms.ContextMenuStrip
+$miOpen = $trayMenu.Items.Add('Ouvrir Velox')
+$miBoost = $trayMenu.Items.Add('⚡ BOOSTER mon PC')
+$miAuto = New-Object System.Windows.Forms.ToolStripMenuItem 'Mode jeu automatique'
+$miAuto.Checked = [bool]$AutoCb.IsChecked
+[void]$trayMenu.Items.Add($miAuto)
+$miCross = New-Object System.Windows.Forms.ToolStripMenuItem 'Viseur'
+$miCross.Checked = [bool]$CrossCb.IsChecked
+[void]$trayMenu.Items.Add($miCross)
+[void]$trayMenu.Items.Add((New-Object System.Windows.Forms.ToolStripSeparator))
+$miQuit = $trayMenu.Items.Add('Quitter Velox')
+$TrayIcon.ContextMenuStrip = $trayMenu
+function Show-MainWindow {
+    $Window.Show()
+    if ($Window.WindowState -eq 'Minimized') { $Window.WindowState = 'Normal' }
+    [void]$Window.Activate()
+    if ($Pages['monitor'].Visibility -eq 'Visible') { Start-Monitor }
+}
+$miOpen.Add_Click({ Show-MainWindow })
+$miBoost.Add_Click({ Show-MainWindow; Invoke-Booster })
+$miAuto.Add_Click({ $AutoCb.IsChecked = -not $AutoCb.IsChecked })
+$miCross.Add_Click({ $CrossCb.IsChecked = -not $CrossCb.IsChecked })
+$trayMenu.Add_Opening({ $miAuto.Checked = [bool]$AutoCb.IsChecked; $miCross.Checked = [bool]$CrossCb.IsChecked })
+$miQuit.Add_Click({ Exit-Velox })
+$TrayIcon.Add_DoubleClick({ Show-MainWindow })
+$TrayIcon.Visible = $true
+
+$script:ReallyExit = $false
+function Exit-Velox([bool]$Force = $false) {
+    if (-not $Force -and $script:Job) {
+        if (-not (Confirm-Action "Une tâche est encore en cours (« $($script:Job.Title) »).`nQuitter quand même ?")) { return }
+    }
+    $script:ReallyExit = $true
+    try { $Timer.Stop() } catch {}
+    $MonData.Run = $false
+    try { if ($script:CrossWin) { $script:CrossWin.Close() } } catch {}
+    try { $TrayIcon.Visible = $false; $TrayIcon.Dispose() } catch {}
+    try { $script:Mutex.ReleaseMutex() } catch {}
+    try { $Window.Close() } catch {}
+    $App.Shutdown()
+}
+function Restart-Velox {
+    Start-Process powershell.exe -ArgumentList "-NoProfile -ExecutionPolicy Bypass -STA -WindowStyle Hidden -File `"$ScriptPath`" -Updated"
+    Exit-Velox $true
+}
+
+$pg = New-Page 'settings' 'Paramètres' 'Comportement de Velox, lancement avec Windows et couleur'
+$bgBody = New-Object Windows.Controls.StackPanel
+$cbTrayOpt = New-Object Windows.Controls.CheckBox
+$cbTrayOpt.Content = 'Quand je ferme la fenêtre, garder Velox près de lʼhorloge (le mode jeu auto et le viseur continuent)'
+$cbTrayOpt.FontSize = 12.5; $cbTrayOpt.Foreground = Br '#E6EAF2'; $cbTrayOpt.Margin = Th '0,0,0,12'
+$cbTrayOpt.IsChecked = [bool]$Settings.TrayOnClose
+$cbTrayOpt.Add_Checked({ $Settings.TrayOnClose = $true; Save-Settings })
+$cbTrayOpt.Add_Unchecked({ $Settings.TrayOnClose = $false; Save-Settings })
+[void]$bgBody.Children.Add($cbTrayOpt)
+$cbAutoStart = New-Object Windows.Controls.CheckBox
+$cbAutoStart.Content = 'Lancer Velox avec Windows (discrètement, près de lʼhorloge)'
+$cbAutoStart.FontSize = 12.5; $cbAutoStart.Foreground = Br '#E6EAF2'
+$cbAutoStart.IsChecked = (Test-Autostart)
+$cbAutoStart.Add_Checked({ Set-Autostart $true })
+$cbAutoStart.Add_Unchecked({ Set-Autostart $false })
+[void]$bgBody.Children.Add($cbAutoStart)
+[void]$bgBody.Children.Add((New-Text 'Le lancement avec Windows utilise une tâche planifiée (pour éviter la demande administrateur à chaque démarrage). Ton antivirus peut la signaler : cʼest normal.' 10.5 '#6B7488' 'Normal' '0,10,0,0'))
+[void]$pg.Children.Add((New-Panel 'Arrière-plan' 'Pour que le mode jeu automatique marche sans garder la fenêtre ouverte.' $bgBody))
+
+$colBody = New-Object Windows.Controls.StackPanel
+$swRow = New-Object Windows.Controls.WrapPanel
+$AccentChoices = [ordered]@{ 'Bleu' = '#2D7BFF'; 'Violet' = '#8B5CF6'; 'Rouge' = '#EF4444'; 'Vert' = '#22C55E'; 'Orange' = '#F97316'; 'Rose' = '#EC4899'; 'Cyan' = '#06B6D4' }
+foreach ($k in $AccentChoices.Keys) {
+    $hex = $AccentChoices[$k]
+    $sw = New-Button '' 'Primary'
+    $sw.Width = 46; $sw.Height = 34; $sw.Margin = Th '0,0,8,8'; $sw.Background = Br $hex; $sw.ToolTip = $k; $sw.Tag = $hex
+    $sw.BorderBrush = Br $(if ($hex -eq $Accent) { '#FFFFFF' } else { $hex })
+    $sw.BorderThickness = Th $(if ($hex -eq $Accent) { '2' } else { '1' })
+    $sw.Add_Click({
+        if ($this.Tag -eq $Accent) { return }
+        $Settings.Accent = $this.Tag; Save-Settings
+        if (Confirm-Action 'Couleur enregistrée. Redémarrer Velox maintenant pour lʼappliquer ?') { Restart-Velox }
+    })
+    [void]$swRow.Children.Add($sw)
+}
+[void]$colBody.Children.Add($swRow)
+[void]$pg.Children.Add((New-Panel 'Couleur' 'Choisis la couleur de Velox (redémarrage de Velox nécessaire).' $colBody))
+
+$aboutBody = New-Object Windows.Controls.StackPanel
+[void]$aboutBody.Children.Add((New-Text "Velox Tweaks $AppVersion · github.com/$RepoSlug" 12.5 '#E6EAF2' 'SemiBold' '0,0,0,10'))
+$aboutRow = New-Object Windows.Controls.WrapPanel
+$bGit = New-Button 'Page GitHub' 'Ghost'; $bGit.Margin = Th '0,0,8,0'
+$bDir = New-Button 'Dossier de Velox' 'Ghost'; $bDir.Margin = Th '0,0,8,0'
+$bLog = New-Button 'Ouvrir le journal' 'Ghost'
+$bGit.Add_Click({ Start-Process "https://github.com/$RepoSlug" })
+$bDir.Add_Click({ Start-Process explorer.exe $ScriptDir })
+$bLog.Add_Click({ if (Test-Path $LogFile) { Start-Process notepad.exe $LogFile } })
+foreach ($b in $bGit, $bDir, $bLog) { [void]$aboutRow.Children.Add($b) }
+[void]$aboutBody.Children.Add($aboutRow)
+[void]$pg.Children.Add((New-Panel 'À propos' 'Velox vérifie les nouvelles versions sur GitHub à chaque démarrage.' $aboutBody))
 
 # --- État & rafraîchissement ----------------------------------------------------
 function Update-Status {
@@ -1570,7 +1990,7 @@ function Update-Live {
 }
 
 # --- Navigation & démarrage ----------------------------------------------------
-foreach ($n in 'NavDashboard', 'NavTweaks', 'NavMaintenance', 'NavBackup', 'NavFixes', 'NavMonitor', 'NavStartup', 'NavTools', 'NavGame') {
+foreach ($n in 'NavDashboard', 'NavTweaks', 'NavMaintenance', 'NavBackup', 'NavFixes', 'NavMonitor', 'NavStartup', 'NavTools', 'NavGame', 'NavSettings') {
     (UI $n).Add_Checked({ Show-Page $this.Tag })
 }
 (UI 'NavDashboard').IsChecked = $true
@@ -1590,14 +2010,25 @@ $Timer.Add_Tick({
     if ($script:Tick % 3 -eq 0 -and $Pages['monitor'].Visibility -eq 'Visible') { Update-MonitorUI }
     if ($script:Tick % 12 -eq 6) { Update-AutoGame }
     if (-not $script:UpdHandled) { Update-UpdateCheck }
+    if ($script:Tick -eq 5) { try { Update-Score } catch {} }
 })
 $Timer.Start()
 
 $Window.Add_Closing({
     param($s, $e)
-    if ($script:Job) {
-        if (-not (Confirm-Action "Une tâche est encore en cours (« $($script:Job.Title) »).`nFermer quand même ?")) { $e.Cancel = $true }
-    }
+    if ($script:ReallyExit) { return }
+    $e.Cancel = $true
+    if ($Settings.TrayOnClose) {
+        $Window.Hide(); Stop-Monitor
+        if (-not $script:BalloonShown) {
+            $script:BalloonShown = $true
+            $TrayIcon.ShowBalloonTip(4000, 'Velox Tweaks', 'Velox continue en arrière-plan. Double-clique sur lʼicône ⚡ pour le rouvrir, clic droit > Quitter pour le fermer.', [System.Windows.Forms.ToolTipIcon]::Info)
+        }
+    } else { Exit-Velox }
 })
-$Window.Add_Closed({ $Timer.Stop(); $MonData.Run = $false })
-[void]$Window.ShowDialog()
+
+$App = New-Object Windows.Application
+$App.ShutdownMode = 'OnExplicitShutdown'
+if ($Settings.Cross) { try { Set-Cross $true } catch {} }
+if ($Tray) { Add-Log 'Velox démarré en arrière-plan (lancement avec Windows)' } else { $Window.Show() }
+[void]$App.Run()
