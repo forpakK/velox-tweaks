@@ -1476,11 +1476,11 @@ $UpdData = [hashtable]::Synchronized(@{ Done = $false })
 $UpdCode = @'
 try {
     [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-    $r = Invoke-RestMethod -Uri "https://api.github.com/repos/$Slug/releases/latest" -Headers @{ 'User-Agent' = 'VeloxTweaks' } -TimeoutSec 10
-    $U.Tag = [string]$r.tag_name
-    $U.Notes = [string]$r.body
-    $a = @($r.assets | Where-Object { $_.name -eq 'VeloxTweaks.ps1' }) | Select-Object -First 1
-    if ($a) { $U.Url = [string]$a.browser_download_url }
+    $raw = "https://raw.githubusercontent.com/$Slug/main"
+    $r = Invoke-RestMethod -Uri "$raw/version.json?t=$([DateTime]::UtcNow.Ticks)" -Headers @{ 'User-Agent' = 'VeloxTweaks' } -TimeoutSec 10
+    $U.Tag = [string]$r.version
+    $U.Notes = [string]$r.notes
+    $U.Url = "$raw/VeloxTweaks.ps1"
 } catch { $U.Error = $_.Exception.Message }
 $U.Done = $true
 '@

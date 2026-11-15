@@ -4,7 +4,7 @@ Optimiseur Windows 10 / 11 pour les joueurs : une seule fenêtre, des réglages 
 
 ## Télécharger
 
-👉 **[Dernière version](https://github.com/forpakK/velox-tweaks/releases/latest)** → télécharge `VeloxTweaks.zip`, puis clic droit → **Extraire tout**.
+👉 **[Télécharger Velox Tweaks](https://github.com/forpakK/velox-tweaks/archive/refs/heads/main.zip)**, puis clic droit sur le zip → **Extraire tout**.
 
 ## Lancer
 
